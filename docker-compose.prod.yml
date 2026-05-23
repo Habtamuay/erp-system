@@ -1,0 +1,64 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${DB_USER}
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      POSTGRES_DB: ${DB_NAME}
+    secrets:
+      - db_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./backups:/backups
+    networks:
+      - erp_network
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.prod
+    environment:
+      DATABASE_URL: postgresql://${DB_USER}:${DB_PASSWORD}@postgres:5432/${DB_NAME}
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      REDIS_URL: redis://redis:6379
+      NODE_ENV: production
+    secrets:
+      - jwt_secret
+      - db_password
+    depends_on:
+      - postgres
+      - redis
+    networks:
+      - erp_network
+    deploy:
+      replicas: 3
+      update_config:
+        parallelism: 1
+        delay: 10s
+      restart_policy:
+        condition: on-failure
+
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass ${REDIS_PASSWORD}
+    secrets:
+      - redis_password
+    networks:
+      - erp_network
+
+secrets:
+  jwt_secret:
+    external: true
+  db_password:
+    external: true
+  redis_password:
+    external: true
+
+networks:
+  erp_network:
+    driver: overlay
+
+volumes:
+  postgres_data:

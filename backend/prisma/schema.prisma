@@ -1,0 +1,303 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ==================== ENUMS ====================
+
+enum AccountType {
+  ASSET
+  LIABILITY
+  EQUITY
+  INCOME
+  EXPENSE
+}
+
+enum AccountCategory {
+  CASH_AND_BANK
+  TRADE_RECEIVABLES
+  PREPAYMENTS
+  RELATED_PARTY
+  INVENTORY
+  WORK_IN_PROCESS
+  PROPERTY_PLANT_EQUIPMENT
+  RIGHT_OF_USE
+  INVESTMENTS
+  TRADE_PAYABLES
+  ACCRUALS
+  BORROWINGS
+  LEASE_OBLIGATIONS
+  TAX_PAYABLES
+  DEFINED_BENEFIT
+  RELATED_PARTY_PAYABLE
+  SHARE_CAPITAL
+  RETAINED_EARNINGS
+  RESERVES
+  REVENUE
+  OTHER_INCOME
+  COST_OF_SALES
+  SELLING_DISTRIBUTION
+  GENERAL_ADMIN
+  FINANCE_COSTS
+}
+
+enum Role {
+  SUPER_ADMIN
+  ADMIN
+  ACCOUNTANT
+  MANAGER
+  USER
+}
+
+enum ItemType {
+  RAW_MATERIAL
+  PACKING_MATERIAL
+  INDIRECT_MATERIAL
+  WIP
+  FINISHED_GOOD
+  SERVICE
+}
+
+enum WorkOrderStatus {
+  PLANNED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+}
+
+// ==================== CORE MODELS ====================
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  name      String
+  role      Role     @default(USER)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  companies        CompanyUser[]
+  journalEntries   JournalEntry[]
+  auditLogs        AuditLog[]
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  code      String   @unique
+  currency  String   @default("ETB")
+  fiscalYearStart DateTime
+  fiscalYearEnd   DateTime
+  taxId     String?
+  phone     String?
+  email     String?
+  address   String?
+  logo      String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users          CompanyUser[]
+  accounts       Account[]
+  journalEntries JournalEntry[]
+  items          Item[]
+  customers      Customer[]
+  suppliers      Supplier[]
+  workOrders     WorkOrder[]
+  boms           BOM[]
+}
+
+model CompanyUser {
+  id        String   @id @default(uuid())
+  userId    String
+  companyId String
+  role      String
+  createdAt DateTime @default(now())
+
+  user    User    @relation(fields: [userId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([userId, companyId])
+}
+
+model Account {
+  id        String   @id @default(uuid())
+  code      String
+  name      String
+  type      AccountType
+  category  AccountCategory
+  groupName String
+  companyId String
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([code, companyId])
+}
+
+model JournalEntry {
+  id          String   @id @default(uuid())
+  date        DateTime
+  reference   String
+  description String
+  type        String
+  status      String   @default("DRAFT")
+  createdBy   String
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+  user    User    @relation(fields: [createdBy], references: [id])
+  lines   JournalLine[]
+}
+
+model JournalLine {
+  id        String   @id @default(uuid())
+  entryId   String
+  accountId String
+  debit     Decimal  @default(0)
+  credit    Decimal  @default(0)
+  createdAt DateTime @default(now())
+
+  entry   JournalEntry @relation(fields: [entryId], references: [id])
+  account Account      @relation(fields: [accountId], references: [id])
+}
+
+model TrialBalance {
+  id             String   @id @default(uuid())
+  period         String
+  accountId      String
+  openingDebit   Decimal  @default(0)
+  openingCredit  Decimal  @default(0)
+  movementDebit  Decimal  @default(0)
+  movementCredit Decimal  @default(0)
+  closingDebit   Decimal  @default(0)
+  closingCredit  Decimal  @default(0)
+  companyId      String
+  createdAt      DateTime @default(now())
+
+  account Account @relation(fields: [accountId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+
+  @@unique([period, accountId, companyId])
+}
+
+model Item {
+  id           String   @id @default(uuid())
+  code         String
+  name         String
+  type         ItemType
+  category     String
+  uom          String
+  unitCost     Decimal  @default(0)
+  sellingPrice Decimal  @default(0)
+  reorderLevel Decimal?
+  currentStock Decimal  @default(0)
+  companyId    String
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+model BOM {
+  id          String   @id @default(uuid())
+  productId   String
+  version     String
+  quantity    Decimal  @default(1)
+  isActive    Boolean  @default(true)
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Item    @relation(fields: [productId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+  items   BOMItem[]
+  workOrders WorkOrder[]
+}
+
+model BOMItem {
+  id           String   @id @default(uuid())
+  bomId        String
+  materialId   String
+  quantity     Decimal
+  wastePercent Decimal  @default(0)
+  createdAt    DateTime @default(now())
+
+  bom      BOM  @relation(fields: [bomId], references: [id])
+  material Item @relation(fields: [materialId], references: [id])
+}
+
+model WorkOrder {
+  id          String   @id @default(uuid())
+  number      String   @unique
+  productId   String
+  bomId       String
+  quantity    Decimal
+  status      WorkOrderStatus @default(PLANNED)
+  startDate   DateTime
+  endDate     DateTime?
+  actualCost  Decimal?
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  product Item    @relation(fields: [productId], references: [id])
+  bom     BOM     @relation(fields: [bomId], references: [id])
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+model Customer {
+  id          String   @id @default(uuid())
+  code        String
+  name        String
+  phone       String?
+  email       String?
+  taxId       String?
+  address     String?
+  creditLimit Decimal?
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+model Supplier {
+  id          String   @id @default(uuid())
+  code        String
+  name        String
+  contact     String?
+  phone       String?
+  email       String?
+  taxId       String?
+  address     String?
+  companyId   String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id])
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String
+  action    String
+  entity    String
+  entityId  String
+  oldValues Json?
+  newValues Json?
+  ipAddress String?
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id])
+}

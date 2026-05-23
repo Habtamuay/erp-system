@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>API Test</title>
+</head>
+<body>
+    <h1>API Test Page</h1>
+    <div id="health">Testing health...</div>
+    <div id="dbstatus">Testing db status...</div>
+    <div id="login">Testing login...</div>
+    
+    <script>
+        // Test health endpoint
+        fetch('/api/health')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('health').innerHTML = '✅ Health: ' + JSON.stringify(data);
+            })
+            .catch(err => {
+                document.getElementById('health').innerHTML = '❌ Health Error: ' + err.message;
+            });
+        
+        // Test db status
+        fetch('/api/db-status')
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('dbstatus').innerHTML = '✅ DB Status: ' + JSON.stringify(data);
+            })
+            .catch(err => {
+                document.getElementById('dbstatus').innerHTML = '❌ DB Status Error: ' + err.message;
+            });
+        
+        // Test login
+        fetch('/api/auth/login', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: 'admin@hilinafoods.com', password: 'admin123' })
+        })
+            .then(res => res.json())
+            .then(data => {
+                document.getElementById('login').innerHTML = '✅ Login: ' + JSON.stringify(data);
+            })
+            .catch(err => {
+                document.getElementById('login').innerHTML = '❌ Login Error: ' + err.message;
+            });
+    </script>
+</body>
+</html>

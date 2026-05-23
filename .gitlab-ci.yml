@@ -1,0 +1,150 @@
+stages:
+  - security
+  - test
+  - build
+  - deploy
+  - monitor
+
+variables:
+  DOCKER_REGISTRY: ${CI_REGISTRY}
+  DOCKER_IMAGE_BACKEND: ${CI_REGISTRY_IMAGE}/backend
+  DOCKER_IMAGE_FRONTEND: ${CI_REGISTRY_IMAGE}/frontend
+
+cache:
+  paths:
+    - backend/node_modules/
+    - frontend/node_modules/
+
+# Security scanning
+security-sast:
+  stage: security
+  image: registry.gitlab.com/gitlab-org/security-products/sast:latest
+  script:
+    - /analyzer run
+  artifacts:
+    reports:
+      sast: gl-sast-report.json
+
+security-dependency:
+  stage: security
+  image: node:20
+  before_script:
+    - cd backend && npm ci
+    - cd ../frontend && npm ci
+  script:
+    - npm audit --production || true
+    - npx snyk test --severity-threshold=high || true
+
+# Testing
+test-backend:
+  stage: test
+  image: node:20
+  services:
+    - postgres:15
+  variables:
+    DATABASE_URL: postgresql://postgres:postgres@postgres:5432/test_db
+  before_script:
+    - cd backend
+    - npm ci
+    - npx prisma migrate deploy
+  script:
+    - npm run test:unit
+    - npm run test:integration
+    - npm run test:coverage
+  coverage: '/All files[^|]*\|[^|]*\s+([\d\.]+)/'
+  artifacts:
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: backend/coverage/cobertura-coverage.xml
+
+test-frontend:
+  stage: test
+  image: node:20
+  before_script:
+    - cd frontend
+    - npm ci
+  script:
+    - npm run test
+    - npm run test:e2e
+
+# Build
+build-images:
+  stage: build
+  image: docker:20
+  services:
+    - docker:dind
+  before_script:
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build backend
+    - docker build --pull -t $DOCKER_IMAGE_BACKEND:$CI_COMMIT_SHA -f docker/Dockerfile.backend.prod ./backend
+    - docker tag $DOCKER_IMAGE_BACKEND:$CI_COMMIT_SHA $DOCKER_IMAGE_BACKEND:latest
+    - docker push $DOCKER_IMAGE_BACKEND:$CI_COMMIT_SHA
+    - docker push $DOCKER_IMAGE_BACKEND:latest
+    
+    # Build frontend
+    - docker build --pull -t $DOCKER_IMAGE_FRONTEND:$CI_COMMIT_SHA -f docker/Dockerfile.frontend.prod ./frontend
+    - docker tag $DOCKER_IMAGE_FRONTEND:$CI_COMMIT_SHA $DOCKER_IMAGE_FRONTEND:latest
+    - docker push $DOCKER_IMAGE_FRONTEND:$CI_COMMIT_SHA
+    - docker push $DOCKER_IMAGE_FRONTEND:latest
+
+# Deploy to staging
+deploy-staging:
+  stage: deploy
+  environment:
+    name: staging
+    url: https://staging.erp.yourcompany.com
+  only:
+    - develop
+  script:
+    - apt-get update && apt-get install -y sshpass
+    - sshpass -p $STAGING_PASSWORD ssh -o StrictHostKeyChecking=no $STAGING_USER@$STAGING_HOST "
+        cd /opt/erp &&
+        docker-compose pull &&
+        docker-compose up -d &&
+        docker exec erp-backend npx prisma migrate deploy
+      "
+
+# Deploy to production (manual approval)
+deploy-production:
+  stage: deploy
+  environment:
+    name: production
+    url: https://erp.yourcompany.com
+  only:
+    - main
+  when: manual
+  script:
+    - apt-get update && apt-get install -y sshpass
+    - sshpass -p $PRODUCTION_PASSWORD ssh -o StrictHostKeyChecking=no $PRODUCTION_USER@$PRODUCTION_HOST "
+        docker service update erp_backend --image $DOCKER_IMAGE_BACKEND:$CI_COMMIT_SHA &&
+        docker service update erp_frontend --image $DOCKER_IMAGE_FRONTEND:$CI_COMMIT_SHA
+      "
+
+# Smoke tests after deployment
+smoke-test:
+  stage: monitor
+  needs: ["deploy-production"]
+  script:
+    - |
+      for i in {1..30}; do
+        if curl -f -s -o /dev/null "https://erp.yourcompany.com/health"; then
+          echo "Deployment successful!"
+          exit 0
+        fi
+        echo "Waiting for deployment..."
+        sleep 10
+      done
+      echo "Deployment failed - health check timeout"
+      exit 1
+
+# Rollback job
+rollback:
+  stage: monitor
+  when: manual
+  script:
+    - sshpass -p $PRODUCTION_PASSWORD ssh $PRODUCTION_USER@$PRODUCTION_HOST "
+        docker service update erp_backend --rollback &&
+        docker service update erp_frontend --rollback
+      "
